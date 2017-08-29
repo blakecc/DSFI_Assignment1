@@ -1,0 +1,6 @@
+"0","# Item similarity"
+"0","product_based_recommendations(""39263"","
+"0","                                   product_similarities1,"
+"0","                                   products_customers_wide) %>%"
+"0","  mutate(p_rank = rank(-score)) %>%"
+"0","  select(title, p_rank)"

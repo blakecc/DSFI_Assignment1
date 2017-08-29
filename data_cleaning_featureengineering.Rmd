@@ -294,27 +294,13 @@ row.names(product_ratings) <- products_list
 
 
 ```{r, eval=F}
-library(NNLM)
-
-set.seed(7)
-
-mf1_decomp <- nnmf(A = product_ratings,
-                  alpha = 3e-3,
-                  beta = 3e-3,
-                  method = "scd",
-                  k = 20,
-                  max.iter = 10000
-                  )
-saveRDS(mf1_decomp, "models/mf1_decomp.rds")
-```
-
-```{r, eval=F}
 
 ranks <- c(1, 2, 3, 4, 5, 10, 20, 50, 100, 200)
-# ranks <- c(4, 8)
+# ranks <- c(1, 2, 3)
 mf_acc <- NULL
 mf_test_acc <- NULL
 
+set.seed(1)
 pr_sample_ind <- sample(length(product_ratings), ceiling(0.2*length(product_ratings)))
 pr_train <- cbind(product_ratings)
 pr_train[pr_sample_ind] <- NA
@@ -322,7 +308,7 @@ pr_test <- cbind(product_ratings)
 pr_test[-pr_sample_ind] <- NA
 
 for (rank in ranks){
-  set.seed(7)
+  set.seed(1)
 
   decomp <- nnmf(A = pr_train,
                  alpha = 3e-3,
@@ -350,32 +336,159 @@ for (rank in ranks){
 rank_test_results <- data.frame("Rank" = ranks, "Train_acc" = mf_acc, "Test_acc" = mf_test_acc)
 
 saveRDS(rank_test_results, "output/rank_test_results.rds")
+```
+```{r}
+
+
+check_matrix <- matrix(rep(mean(pr_train, na.rm = T), length(pr_test)), dim(pr_test)[1], dim(pr_test)[2])
+check_errors <- (check_matrix - pr_test)^2
+check_accuracy <- sqrt(mean(check_errors[!is.na(pr_test)]))
+check_accuracy
+
 
 ```
 ```{r}
-rank_test_results <- readRDS("output/rank_test_results.rds")
+# rank_test_results <- readRDS("output/rank_test_results.rds")
+
+ggplot(rank_test_results) +
+  geom_line(aes(x = Rank, y = Train_acc, color = "Train")) +
+  geom_line(aes(x = Rank, y = Test_acc, color = "Test")) +
+  geom_vline(aes(xintercept = 1), linetype = 2) +
+  # scale_color_manual(values = c("Train", "Test"))
+  scale_color_discrete("Accuracy") +
+  theme_light()
+
+sum(is.na(product_ratings)) / length(product_ratings)
+
+```
+```{r, eval=F}
+library(NNLM)
+
+set.seed(7)
+
+mf1_decomp <- nnmf(A = product_ratings,
+                  alpha = 3e-3,
+                  beta = 3e-3,
+                  method = "scd",
+                  k = 1,
+                  max.iter = 10000
+                  )
+
+saveRDS(mf1_decomp, "models/mf1_decomp.rds")
 ```
 ```{r}
-mf1_decomp <- readRDS("models/mf1_decomp.rds")
 
-mf1_observed <- rw_decomp$W %*% rw_decomp$H
+# Top choices for our user
+mf1_predicted <- mf1_decomp$W %*% mf1_decomp$H
+mf1_predicted[0,head(order(mf1_predicted["39263",], decreasing = T))]
 
-mf1_errors <- (mf1_observed - product_ratings)^2
-mf1_accuracy <- sqrt(mean(mf1_errors[!is.na(product_ratings)]))
-
-mf1_accuracy
-mf1_decomp$n.iteration
-
-mf1_observed <- data.frame(mf1_observed)
-
-product_ratings[sample(length(product_ratings), 30)]
-
-# test_matrix <- round( matrix(runif(30), 10, 3)*10, digits = 0)
-# test_sample_ind <- sample(length(test_matrix), ceiling(0.2*length(test_matrix)))
-# 
-# test_matrix
-# test_sample_ind
-# test_matrix[test_sample_ind]
+# Top wines based on H factor
+mf1_predicted[0,head(order(mf1_decomp$H, decreasing = T))]
 
 ```
 
+
+
+## Customer similarities with user data
+```{r}
+
+# get matrix of "bought wines" i.e. customer_id as rows and wines as columns
+
+customer_products_bought_tall_2 <- order_items %>%
+  select(orders_id, products_name) %>%
+  inner_join(orders %>% select(customers_id, orders_id)) %>% # use inner join to avoid customers without purchases?
+  select(customers_id, products_name) %>%
+  unique() %>%
+  mutate(bought = 1)
+
+# create customer attributes data to add
+# customers %>%
+#   select(customers_id, customers_gender, customer_age_group) %>%
+#   mutate(bought = 1) %>%
+#   complete(customers_id, customers_gender, customer_age_group, fill = list(bought = 0))
+
+customer_products_bought_tall_2 <- customers %>%
+  select(customers_id, customer_age_group) %>%
+  mutate(bought = 1) %>%
+  complete(customers_id, customer_age_group, fill = list(bought = 0)) %>%
+  rename(products_name = customer_age_group) %>%
+  rbind(customer_products_bought_tall_2)
+
+customer_products_bought_tall_2 <- customers %>%
+  select(customers_id, customers_gender) %>%
+  mutate(bought = 1) %>%
+  complete(customers_id, customers_gender, fill = list(bought = 0)) %>%
+  rename(products_name = customers_gender) %>%
+  rbind(customer_products_bought_tall_2)
+
+customer_products_bought_wide_2 <- customer_products_bought_tall_2 %>%
+  complete(customers_id, products_name, fill = list(bought = 0)) %>%
+  spread(key = products_name, value = bought)
+
+# convert data to matrix form 
+sorted_customers_id <- as.character(unlist(customer_products_bought_wide_2[,1]))
+customer_products_bought_wide_2 <- as.matrix(customer_products_bought_wide_2[,-1])
+row.names(customer_products_bought_wide_2) <- sorted_customers_id
+```
+
+```{r, eval=F}
+
+# cosine_sim <- function(a,b){crossprod(a,b)/sqrt(crossprod(a)*crossprod(b))}
+
+
+cosine_sim <- function(a,b){crossprod(a,b)/sqrt(crossprod(a)*crossprod(b))}
+temp_func_2 <- Vectorize(function(x, y) cosine_sim(customer_products_bought_wide_2[x,], customer_products_bought_wide_2[y,]))
+
+customer_similarities2 <- outer(seq_len(nrow(customer_products_bought_wide_2)),
+      seq_len(nrow(customer_products_bought_wide_2)),
+      temp_func_2)
+
+diag(customer_similarities2) <- 0
+row.names(customer_similarities2) <- row.names(customer_products_bought_wide_2)
+colnames(customer_similarities2) <- row.names(customer_products_bought_wide_2)
+
+saveRDS(customer_similarities2, "output/customer_similarities2.rds")
+
+# max(customer_products_bought_wide[263,])
+# cosine_sim(customer_products_bought_wide[3,], customer_products_bought_wide[3,])
+
+```
+```{r}
+
+head(customer_based_recommendations("39263",
+                                    customer_similarities1,
+                                    customer_products_bought_wide))
+
+cs_2_indexedBy1 <- customer_similarities2[row.names(customer_similarities1),colnames(customer_similarities1)]
+head(customer_based_recommendations("39263",
+                                    cs_2_indexedBy1,
+                                    customer_products_bought_wide))
+
+```
+
+## Combine recommendations
+
+```{r}
+
+# Context containing similarity
+customer_based_recommendations("39263",
+                                    cs_2_indexedBy1,
+                                    customer_products_bought_wide) %>%
+  mutate(p_rank = rank(-score)) %>%
+  select(title, p_rank)
+
+# User bought similarity only
+customer_based_recommendations("39263",
+                                    customer_similarities1,
+                                    customer_products_bought_wide) %>%
+  mutate(p_rank = rank(-score)) %>%
+  select(title, p_rank)
+
+# Item similarity
+product_based_recommendations("39263",
+                                   product_similarities1,
+                                   products_customers_wide) %>%
+  mutate(p_rank = rank(-score)) %>%
+  select(title, p_rank)
+
+```
