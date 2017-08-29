@@ -1,0 +1,364 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+
+rm(list = ls())
+
+suppressMessages(library(data.table))
+suppressMessages(library(tidyverse))
+suppressMessages(library(lubridate))
+suppressMessages(library(stringr))
+
+```
+
+## Get data into R
+
+```{r}
+
+orders_orig <- data.frame(fread("data/orders.csv", header = T))
+order_items <- data.frame(fread("data/order-items.csv", header = T))
+
+```
+
+## Create separate data frames for orders, customers, items
+
+```{r}
+
+customers <- orders_orig %>%
+  select(customers_id, customers_gender, customers_dob) %>%
+  unique() %>%
+  mutate(customers_id = as.numeric(customers_id)) %>%
+  arrange(customers_id)
+
+orders <- orders_orig %>%
+  select(-c(customers_gender, customers_dob)) %>%
+  unique() %>%
+  mutate(customers_id = as.numeric(customers_id)) %>%
+  arrange(customers_id)
+
+```
+
+## Clean the order items table
+
+```{r}
+
+order_items <- order_items %>%
+  mutate(products_price = as.numeric(products_price)) %>%
+  mutate(products_quantity = as.numeric(products_quantity)) %>%
+  filter(products_price > 0) %>%
+  mutate(products_quantity = ifelse(str_detect(products_name, "case|CASE|Case") & !str_detect(products_name, "6 bottles"), products_quantity * 12, products_quantity)) %>%
+  mutate(products_quantity = ifelse(str_detect(products_name, "case|CASE|Case") & str_detect(products_name, "6 bottles"), products_quantity * 6, products_quantity)) %>%
+  mutate(products_quantity = ifelse(str_detect(products_name, "12 Assorted"), products_quantity * 12, products_quantity)) %>%
+  mutate(products_quantity = ifelse(str_detect(products_name, "Assorted"), products_quantity * 12, products_quantity)) %>%
+  mutate(products_quantity = ifelse(str_detect(products_name, "Budget White"), products_quantity * 12, products_quantity)) %>%
+  mutate(products_quantity = ifelse(str_detect(products_name, "30 bottles"), products_quantity * 30, products_quantity)) %>%
+  mutate(products_quantity = ifelse(str_detect(products_name, "Voucher"), products_quantity * 6, products_quantity))
+
+
+# TODO: 
+
+# mixed cases contain 12 bottles (6 red, 6 white)
+# seems all order items with "case" in the name, and not a multiple of 6 (or 12?) are actually cases and should be multiplied by 12
+# assuming assorted is 12 too
+# wynklub seems to be just one bottle
+# gift vouchers are tricky ... assume the intention is to buy 6 bottles
+# remove "as arranged by Johan"?
+# remove wine years?
+
+# table(order_items$products_quantity)
+# order_items[order_items$products_quantity == 1 & !str_detect(order_items$products_name, "wynklub"),]
+# order_items[str_detect(order_items$products_name, "Johan"),]
+
+```
+
+## Add features to customers table
+
+```{r}
+# number of orders
+
+customers <- orders %>%
+  count(customers_id) %>%
+  right_join(customers)
+
+colnames(customers)[colnames(customers) == "n"] <- "order_count"
+
+# age and age group
+
+customers <- customers %>%
+  mutate(customers_dob = parse_date_time(customers_dob, "%Y-%m-%d H:%M:%S")) %>%
+  mutate(customer_age =  as.period(interval(customers_dob, ymd("20170824")))) %>%
+  mutate(customer_age_group = ifelse(customer_age >= years(60), "old", ifelse(customer_age >= years(35), "mid", "young"))) %>%
+  mutate(customer_age_group = as.factor(customer_age_group))
+
+# avg. per bottle
+customer_item_prices <- left_join(orders, order_items) %>%
+  mutate(total_paid = products_price * products_quantity) %>%
+  group_by(customers_id) %>%
+  summarise("order_amount" = sum(total_paid), "item_count" = sum(products_quantity)) %>%
+  mutate(avg_item = order_amount / item_count)
+
+customers <- customer_item_prices %>%
+  select(customers_id, avg_item) %>%
+  right_join(customers)
+
+```
+
+## Simple bought products approach (i.e. user-based collaborative filtering)
+
+```{r}
+
+# get matrix of "bought wines" i.e. customer_id as rows and wines as columns
+
+customer_products_bought_tall <- order_items %>%
+  select(orders_id, products_name) %>%
+  inner_join(orders %>% select(customers_id, orders_id)) %>% # use inner join to avoid customers without purchases?
+  select(customers_id, products_name) %>%
+  unique() %>%
+  mutate(bought = 1)
+
+customer_products_bought_wide <- customer_products_bought_tall %>%
+  complete(customers_id, products_name, fill = list(bought = 0)) %>%
+  spread(key = products_name, value = bought)
+
+# convert data to matrix form 
+sorted_customers_id <- as.character(unlist(customer_products_bought_wide[,1]))
+customer_products_bought_wide <- as.matrix(customer_products_bought_wide[,-1])
+row.names(customer_products_bought_wide) <- sorted_customers_id
+```
+
+```{r, eval=F}
+
+cosine_sim <- function(a,b){crossprod(a,b)/sqrt(crossprod(a)*crossprod(b))}
+temp_func <- Vectorize(function(x, y) cosine_sim(customer_products_bought_wide[x,], customer_products_bought_wide[y,]))
+
+customer_similarities1 <- outer(seq_len(nrow(customer_products_bought_wide)),
+      seq_len(nrow(customer_products_bought_wide)),
+      temp_func)
+
+diag(customer_similarities1) <- 0
+row.names(customer_similarities1) <- row.names(customer_products_bought_wide)
+colnames(customer_similarities1) <- row.names(customer_products_bought_wide)
+
+saveRDS(customer_similarities1, "output/customer_similarities1.rds")
+
+# max(customer_products_bought_wide[263,])
+# cosine_sim(customer_products_bought_wide[3,], customer_products_bought_wide[3,])
+
+```
+```{r}
+customer_similarities1 <- readRDS("output/customer_similarities1.rds")
+
+
+# sort(apply(customer_products_bought_wide, 1, sum), decreasing = T)
+# # Raka Spliced 2014
+# # Le Bonheur Prima 2013 unlabelled
+# # Knorhoek Shiraz/Cabernet Franc/Cabernet Sauvignon 2015
+# 
+# crossprod(customer_products_bought_wide[, "Raka Spliced 2014"], customer_similarities1["39263",])
+# 
+# temp <- customer_similarities1["39263",] %*% customer_products_bought_wide
+# # customer_similarities1["39263",] %*% customer_products_bought_wide
+# dim(customer_similarities1["39263",])
+dim(customer_products_bought_wide)
+# dim(temp)
+
+dim(customer_products_bought_wide[0,])
+
+customer_scores <- data.frame(product = colnames(customer_products_bought_wide),
+                              score = as.vector(customer_similarities1["39263",] %*% customer_products_bought_wide),
+                              bought = customer_products_bought_wide["39263",])
+
+customer_scores %>%
+  # filter(bought == 0) %>%
+  arrange(desc(score)) %>%
+  select(product, score, bought)
+```
+
+```{r}
+
+customer_based_recommendations <- function(customer, customer_similarities, bought_wines){
+  
+  # turn into character if not already
+  customer <- ifelse(is.character(customer),customer,as.character(customer))
+  
+  # get scores
+  customer_scores <- data.frame(title = colnames(bought_wines), 
+                            score = as.vector(customer_similarities[customer,] %*% bought_wines), 
+                            bought = bought_wines[customer,])
+  
+  # sort unseen movies by score and remove the 'seen' column
+  customer_recom <- customer_scores %>% 
+    filter(bought == 0) %>%
+    arrange(desc(score)) %>% 
+    select(-bought) 
+  
+  return(customer_recom)
+  
+}
+
+customer_based_recommendations("39263", customer_similarities1, customer_products_bought_wide)
+
+```
+
+## Item-based approach
+
+```{r, eval=F}
+
+products_customers_wide <- t(customer_products_bought_wide)
+
+temp_func <- Vectorize(function(x, y) cosine_sim(products_customers_wide[x,], products_customers_wide[y,]))
+
+product_similarities1 <- outer(seq_len(nrow(products_customers_wide)),
+      seq_len(nrow(products_customers_wide)),
+      temp_func)
+
+diag(product_similarities1) <- 0
+row.names(product_similarities1) <- row.names(products_customers_wide)
+colnames(product_similarities1) <- row.names(products_customers_wide)
+
+saveRDS(product_similarities1, "output/product_similarities1.rds")
+```
+```{r}
+product_similarities1 <- readRDS("output/product_similarities1.rds")
+```
+```{r}
+user_bought <- customer_products_bought_tall %>% 
+        filter(customers_id == "39263") %>% 
+        select(products_name) %>% 
+        unlist() %>% 
+        as.character()
+
+product_scores <- tibble(product = row.names(product_similarities1), 
+                      score = apply(product_similarities1[,user_bought],1,sum),
+                      bought = products_customers_wide[,as.character(39263)])
+
+product_scores %>%
+  filter(bought == 0) %>%
+  arrange(desc(score))
+
+```
+```{r}
+product_based_recommendations <- function(customer, product_similarities, bought_products){
+  
+  # turn into character if not already
+  customer <- ifelse(is.character(customer),customer,as.character(customer))
+  
+  # get scores
+  customer_bought <- row.names(product_similarities)[bought_products[,customer] == TRUE]
+  customer_scores <- tibble(title = row.names(product_similarities), 
+                        score = apply(product_similarities[,customer_bought],1,sum),
+                        bought = bought_products[,customer])
+  # sort unseen movies by score and remove the 'seen' column
+  customer_recom <- customer_scores %>% filter(bought == 0) %>% arrange(desc(score)) %>% select(-bought)
+
+  return(customer_recom)
+  
+}
+
+product_based_recommendations("39263", product_similarities1, products_customers_wide)
+
+# head(product_based_recommendations("39263", product_similarities1, products_customers_wide)) %in% head(customer_based_recommendations("39263", customer_similarities1, customer_products_bought_wide))
+
+
+```
+
+## Matrix factorization
+
+Proxy for wine rating? Number of bottles?
+
+Some combination of quantity and price ... i.e. something may be really good, but expensive. Something may be mediocre but cheap. Number of bottles bias towards cheap, price per bottle bias toward expensive. Some combination of the two? And probably a log of that combination in order to reduce impact of MASSIVE orders.
+
+```{r}
+product_ratings <- order_items %>%
+  mutate(log_order_val = log(products_quantity * products_price)) %>% # create ratings proxy
+  inner_join(orders) %>%
+  select(customers_id, products_name, log_order_val) %>%
+  group_by(customers_id, products_name) %>%
+  summarise(rating_proxy = mean(log_order_val)) %>%
+  ungroup() %>%
+  # complete(customers_id, products_name, fill = list(ratings_proxy = NA))
+  complete(customers_id, products_name) %>%
+  spread(key = products_name, value = rating_proxy)
+
+# product_ratings %>%
+#   gather(-customers_id, key = products_name, value = rating_proxy)
+
+products_list <- as.character(unlist(product_ratings[,1]))
+product_ratings <- as.matrix(product_ratings[,-1])
+row.names(product_ratings) <- products_list
+
+```
+```{r}
+evaluate_fit_l2_bias <- function(x, observed_ratings, customer_rows, customer_cols, product_rows, product_cols, lambda){
+  
+  # x <- runif(x_num)
+    
+  # extract user and movie factors from parameter vector (note x is defined such that 
+  # the first 75 elements are latent factors for users and rest are for movies)
+  customer_factors <- matrix(x[1:(customer_rows*customer_cols)],customer_rows,customer_cols)
+  product_factors <- matrix(x[(customer_rows*customer_cols + 1):(customer_rows*customer_cols + product_rows*product_cols)],product_rows,product_cols)
+  
+  #biases
+  customer_bias <- matrix(x[(customer_rows*customer_cols + product_rows*product_cols + 1):(customer_rows*customer_cols + product_rows*product_cols + 1 + customer_rows)],nrow=customer_rows,ncol=product_cols)
+  
+  # dim(customer_bias)
+  
+  product_bias <- t(matrix(x[(customer_rows*customer_cols + product_rows*product_cols + 1 + customer_rows + 1):(customer_rows*customer_cols + product_rows*product_cols + 1 + customer_rows + 1 + product_rows)],nrow=product_cols,ncol=customer_rows))
+  
+  # dim(product_bias)
+  
+  # get predictions from dot products of respective user and movie factor
+  predicted_ratings <- customer_factors %*% product_factors + customer_bias + product_bias
+  # dim(predicted_ratings)
+  
+  # model accuracy is sum of squared errors over all rated movies
+  # observed_ratings <- product_ratings
+  # dim(observed_ratings)
+  errors <- (observed_ratings - predicted_ratings)^2
+  penalty <- sum(sqrt(apply(customer_factors^2,1,sum))) + sum(sqrt(apply(product_factors^2,2,sum)))
+  # lambda <- 3e-3
+  accuracy <- sqrt(mean(errors[!is.na(observed_ratings)])) + lambda * penalty 
+  
+  return(accuracy)
+}
+
+dim(product_ratings)
+factor_depth <- 10
+customer_rows <- dim(product_ratings)[1]
+customer_cols <- factor_depth
+product_cols <- dim(product_ratings)[2]
+product_rows <- factor_depth
+
+x_num <- customer_rows*customer_cols + product_cols*product_rows + customer_rows + product_cols
+
+
+set.seed(10)
+# optimization step (note longer parameter vector to include bias)
+rec1 <- optim(par=runif(x_num),evaluate_fit_l2_bias,
+              observed_ratings = product_ratings,
+              customer_rows = customer_rows,
+              customer_cols = customer_cols,
+              product_rows = product_rows,
+              product_cols = product_cols,
+              lambda = 3e-3,
+              control=list(maxit=100),
+              method = "BFGS")
+rec1$convergence
+rec1$value
+
+```
+```{r}
+
+library(NMF)
+
+data.frame(product_ratings)
+
+factorized_product_ratings_object <- nmf(x = product_ratings, rank = 10)
+
+
+
+```
+
