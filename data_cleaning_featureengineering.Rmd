@@ -350,15 +350,30 @@ rec1$convergence
 rec1$value
 
 ```
+
 ```{r}
+library(NNLM)
 
-library(NMF)
+set.seed(7)
 
-data.frame(product_ratings)
+rw_decomp <- nnmf(A = product_ratings,
+                  alpha = 3e-3,
+                  beta = 3e-3,
+                  method = "scd",
+                  k = 20,
+                  max.iter = 10000
+                  )
 
-factorized_product_ratings_object <- nmf(x = product_ratings, rank = 10)
+W <- rw_decomp$W
+H <- rw_decomp$H
 
+observed <- W %*% H
 
+errors <- (observed - product_ratings)^2
+accuracy <- sqrt(mean(errors[!is.na(product_ratings)]))
+
+accuracy
+rw_decomp$n.iteration
 
 ```
 
