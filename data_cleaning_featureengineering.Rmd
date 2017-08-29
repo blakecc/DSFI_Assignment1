@@ -291,89 +291,91 @@ product_ratings <- as.matrix(product_ratings[,-1])
 row.names(product_ratings) <- products_list
 
 ```
-```{r}
-evaluate_fit_l2_bias <- function(x, observed_ratings, customer_rows, customer_cols, product_rows, product_cols, lambda){
-  
-  # x <- runif(x_num)
-    
-  # extract user and movie factors from parameter vector (note x is defined such that 
-  # the first 75 elements are latent factors for users and rest are for movies)
-  customer_factors <- matrix(x[1:(customer_rows*customer_cols)],customer_rows,customer_cols)
-  product_factors <- matrix(x[(customer_rows*customer_cols + 1):(customer_rows*customer_cols + product_rows*product_cols)],product_rows,product_cols)
-  
-  #biases
-  customer_bias <- matrix(x[(customer_rows*customer_cols + product_rows*product_cols + 1):(customer_rows*customer_cols + product_rows*product_cols + 1 + customer_rows)],nrow=customer_rows,ncol=product_cols)
-  
-  # dim(customer_bias)
-  
-  product_bias <- t(matrix(x[(customer_rows*customer_cols + product_rows*product_cols + 1 + customer_rows + 1):(customer_rows*customer_cols + product_rows*product_cols + 1 + customer_rows + 1 + product_rows)],nrow=product_cols,ncol=customer_rows))
-  
-  # dim(product_bias)
-  
-  # get predictions from dot products of respective user and movie factor
-  predicted_ratings <- customer_factors %*% product_factors + customer_bias + product_bias
-  # dim(predicted_ratings)
-  
-  # model accuracy is sum of squared errors over all rated movies
-  # observed_ratings <- product_ratings
-  # dim(observed_ratings)
-  errors <- (observed_ratings - predicted_ratings)^2
-  penalty <- sum(sqrt(apply(customer_factors^2,1,sum))) + sum(sqrt(apply(product_factors^2,2,sum)))
-  # lambda <- 3e-3
-  accuracy <- sqrt(mean(errors[!is.na(observed_ratings)])) + lambda * penalty 
-  
-  return(accuracy)
-}
-
-dim(product_ratings)
-factor_depth <- 10
-customer_rows <- dim(product_ratings)[1]
-customer_cols <- factor_depth
-product_cols <- dim(product_ratings)[2]
-product_rows <- factor_depth
-
-x_num <- customer_rows*customer_cols + product_cols*product_rows + customer_rows + product_cols
 
 
-set.seed(10)
-# optimization step (note longer parameter vector to include bias)
-rec1 <- optim(par=runif(x_num),evaluate_fit_l2_bias,
-              observed_ratings = product_ratings,
-              customer_rows = customer_rows,
-              customer_cols = customer_cols,
-              product_rows = product_rows,
-              product_cols = product_cols,
-              lambda = 3e-3,
-              control=list(maxit=100),
-              method = "BFGS")
-rec1$convergence
-rec1$value
-
-```
-
-```{r}
+```{r, eval=F}
 library(NNLM)
 
 set.seed(7)
 
-rw_decomp <- nnmf(A = product_ratings,
+mf1_decomp <- nnmf(A = product_ratings,
                   alpha = 3e-3,
                   beta = 3e-3,
                   method = "scd",
                   k = 20,
                   max.iter = 10000
                   )
+saveRDS(mf1_decomp, "models/mf1_decomp.rds")
+```
 
-W <- rw_decomp$W
-H <- rw_decomp$H
+```{r, eval=F}
 
-observed <- W %*% H
+ranks <- c(1, 2, 3, 4, 5, 10, 20, 50, 100, 200)
+# ranks <- c(4, 8)
+mf_acc <- NULL
+mf_test_acc <- NULL
 
-errors <- (observed - product_ratings)^2
-accuracy <- sqrt(mean(errors[!is.na(product_ratings)]))
+pr_sample_ind <- sample(length(product_ratings), ceiling(0.2*length(product_ratings)))
+pr_train <- cbind(product_ratings)
+pr_train[pr_sample_ind] <- NA
+pr_test <- cbind(product_ratings)
+pr_test[-pr_sample_ind] <- NA
 
-accuracy
-rw_decomp$n.iteration
+for (rank in ranks){
+  set.seed(7)
+
+  decomp <- nnmf(A = pr_train,
+                 alpha = 3e-3,
+                 beta = 3e-3,
+                 method = "scd",
+                 k = rank,
+                 max.iter = 10000
+                 )
+  mf_observed <- decomp$W %*% decomp$H
+  
+  # Train accuracy
+  mf_train_errors <- (mf_observed - pr_train)^2
+  mf_train_accuracy <- sqrt(mean(mf_train_errors[!is.na(pr_train)]))
+  
+  mf_acc <- append(mf_acc, mf_train_accuracy)
+  
+  # Test accuracy
+  mf_test_errors <- (mf_observed - pr_test)^2
+  mf_test_accuracy <- sqrt(mean(mf_test_errors[!is.na(pr_test)]))
+  
+  mf_test_acc <- append(mf_test_acc, mf_test_accuracy)
+  
+}
+
+rank_test_results <- data.frame("Rank" = ranks, "Train_acc" = mf_acc, "Test_acc" = mf_test_acc)
+
+saveRDS(rank_test_results, "output/rank_test_results.rds")
+
+```
+```{r}
+rank_test_results <- readRDS("output/rank_test_results.rds")
+```
+```{r}
+mf1_decomp <- readRDS("models/mf1_decomp.rds")
+
+mf1_observed <- rw_decomp$W %*% rw_decomp$H
+
+mf1_errors <- (mf1_observed - product_ratings)^2
+mf1_accuracy <- sqrt(mean(mf1_errors[!is.na(product_ratings)]))
+
+mf1_accuracy
+mf1_decomp$n.iteration
+
+mf1_observed <- data.frame(mf1_observed)
+
+product_ratings[sample(length(product_ratings), 30)]
+
+# test_matrix <- round( matrix(runif(30), 10, 3)*10, digits = 0)
+# test_sample_ind <- sample(length(test_matrix), ceiling(0.2*length(test_matrix)))
+# 
+# test_matrix
+# test_sample_ind
+# test_matrix[test_sample_ind]
 
 ```
 
