@@ -470,39 +470,55 @@ head(customer_based_recommendations("39263",
 
 ```{r}
 
-# Context containing similarity
-rank_1 <- customer_based_recommendations("39263",
-                                    cs_2_indexedBy1,
-                                    customer_products_bought_wide) %>%
-  mutate(p_rank = rank(-score)) %>%
-  select(product, p_rank)
+ensemble_recommender <- function(customer, context_similarities, no_context_similarities, product_similarities, wide_customer_products_matrix, predicted_ratings){
+  
+  # Convert to character
+  customer <- ifelse(is.character(customer), customer, as.character(customer))
+  
+  # Context containing similarity
+  rank_1 <- customer_based_recommendations(customer,
+                                      context_similarities,
+                                      wide_customer_products_matrix) %>%
+    mutate(p_rank = rank(-score)) %>%
+    select(product, p_rank)
+  
+  # User bought similarity only
+  rank_2 <- customer_based_recommendations(customer,
+                                      no_context_similarities,
+                                      wide_customer_products_matrix) %>%
+    mutate(p_rank = rank(-score)) %>%
+    select(product, p_rank)
+  
+  # Item similarity
+  rank_3 <- product_based_recommendations(customer,
+                                     product_similarities,
+                                     t(wide_customer_products_matrix)) %>%
+    mutate(p_rank = rank(-score)) %>%
+    select(product, p_rank)
+  
+  # Matrix factorization
+  rank_4 <- data.frame(score = predicted_ratings[customer,]) %>%
+    rownames_to_column("product") %>%
+    mutate(p_rank = rank(-score)) %>%
+    select(product, p_rank)
+  
+  # Combination of methods
+  customer_recs <- inner_join(inner_join(inner_join(rank_1, rank_2, by = "product"), rank_3, by = "product"), rank_4, by = "product") %>%
+    mutate(overall = p_rank.x + p_rank.y + p_rank.x.x + p_rank.y.y) %>%
+    select(product, overall) %>%
+    mutate(p_rank = rank(overall)) %>%
+    select(product, p_rank) %>%
+    arrange(p_rank)
+  
+  return(customer_recs)
+}
 
-# User bought similarity only
-rank_2 <- customer_based_recommendations("39263",
-                                    customer_similarities1,
-                                    customer_products_bought_wide) %>%
-  mutate(p_rank = rank(-score)) %>%
-  select(product, p_rank)
+suppressWarnings(ensemble_recommender("39263",
+                     context_similarities = cs_2_indexedBy1,
+                     no_context_similarities = customer_similarities1,
+                     product_similarities = product_similarities1,
+                     wide_customer_products_matrix = customer_products_bought_wide,
+                     predicted_ratings = mf1_predicted))
 
-# Item similarity
-rank_3 <- product_based_recommendations("39263",
-                                   product_similarities1,
-                                   products_customers_wide) %>%
-  mutate(p_rank = rank(-score)) %>%
-  select(product, p_rank)
-
-# Matrix factorization
-rank_4 <- data.frame(score = mf1_predicted["39263",]) %>%
-  rownames_to_column("product") %>%
-  mutate(p_rank = rank(-score)) %>%
-  select(product, p_rank)
-
-# Combination of methods
-inner_join(inner_join(inner_join(rank_1, rank_2, by = "product"), rank_3, by = "product"), rank_4, by = "product") %>%
-  mutate(overall = p_rank.x + p_rank.y + p_rank.x.x + p_rank.y.y) %>%
-  select(product, overall) %>%
-  mutate(p_rank = rank(overall)) %>%
-  select(product, p_rank) %>%
-  arrange(p_rank)
 
 ```
