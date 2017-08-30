@@ -39,6 +39,7 @@ orders <- orders_orig %>%
   mutate(customers_id = as.numeric(customers_id)) %>%
   arrange(customers_id)
 
+
 ```
 
 ## Clean the order items table
@@ -104,7 +105,32 @@ customers <- customer_item_prices %>%
   select(customers_id, avg_item) %>%
   right_join(customers)
 
+# customers %>%
+#   arrange(desc(order_count))
+
 ```
+
+Identify top and bottom customers by number of unique products bought
+
+```{r}
+
+# justify choosing "39263" for a top customers
+order_items %>%
+  right_join(orders, by = "orders_id") %>%
+  count(customers_id) %>%
+  arrange(desc(n)) %>%
+  head()
+
+# justify choosings "411" for a bottom customer
+order_items %>%
+  right_join(orders, by = "orders_id") %>%
+  count(customers_id) %>%
+  arrange(n) %>%
+  head()
+
+
+```
+
 
 ## Simple bought products approach (i.e. user-based collaborative filtering)
 
@@ -249,7 +275,7 @@ product_based_recommendations <- function(customer, product_similarities, bought
   # get scores
   customer_bought <- row.names(product_similarities)[bought_products[,customer] == TRUE]
   customer_scores <- tibble(product = row.names(product_similarities), 
-                        score = apply(product_similarities[,customer_bought],1,sum),
+                        score = apply(data.frame(product_similarities[,customer_bought]),1,sum),
                         bought = bought_products[,customer])
   # sort unseen movies by score and remove the 'seen' column
   customer_recom <- customer_scores %>% filter(bought == 0) %>% arrange(desc(score)) %>% select(-bought)
@@ -258,7 +284,16 @@ product_based_recommendations <- function(customer, product_similarities, bought
   
 }
 
-product_based_recommendations("39263", product_similarities1, products_customers_wide)
+product_based_recommendations("411", product_similarities1, products_customers_wide)
+
+# undebug(product_based_recommendations)
+# test <- "411"
+# test <- row.names(product_similarities1)[products_customers_wide[,test] == TRUE]
+# tibble(product = row.names(product_similarities1), 
+#                         score = apply(data.frame(product_similarities1[,test]),1,sum),
+#                         bought = products_customers_wide[,"411"]) %>%
+#   arrange(desc(score))
+
 
 # head(product_based_recommendations("39263", product_similarities1, products_customers_wide)) %in% head(customer_based_recommendations("39263", customer_similarities1, customer_products_bought_wide))
 
@@ -380,7 +415,7 @@ saveRDS(mf1_decomp, "models/mf1_decomp.rds")
 
 # Top choices for our user
 mf1_predicted <- mf1_decomp$W %*% mf1_decomp$H
-mf1_predicted[0,head(order(mf1_predicted["39263",], decreasing = T))]
+mf1_predicted[0,head(order(mf1_predicted["411",], decreasing = T))]
 
 # Top wines based on H factor
 mf1_predicted[0,head(order(mf1_decomp$H, decreasing = T))]
@@ -513,12 +548,35 @@ ensemble_recommender <- function(customer, context_similarities, no_context_simi
   return(customer_recs)
 }
 
-suppressWarnings(ensemble_recommender("39263",
+suppressWarnings(ensemble_recommender("624",
                      context_similarities = cs_2_indexedBy1,
                      no_context_similarities = customer_similarities1,
                      product_similarities = product_similarities1,
                      wide_customer_products_matrix = customer_products_bought_wide,
                      predicted_ratings = mf1_predicted))
 
+# debug(ensemble_recommender)
+# undebug(ensemble_recommender)
+
+# test <- "411"
+# data.frame(score = mf1_predicted[test,]) %>%
+#     rownames_to_column("product") %>%
+#     mutate(p_rank = rank(-score)) %>%
+#     select(product, p_rank)
+
+# test <- "411"
+# product_based_recommendations(test,
+#                                      product_similarities1,
+#                                      t(customer_products_bought_wide)) %>%
+#     mutate(p_rank = rank(-score)) %>%
+#     select(product, p_rank)
+
+# customer_similarities1["411",] %>% data.frame() %>% rownames_to_column() %>% filter(. > 0) # customer exists and has non-zero similarities to other customers
+# customer_products_bought_wide["411",] %>% data.frame() %>% rownames_to_column() %>% arrange(desc(.)) # only one product with a non-zero
+# cs_2_indexedBy1["411",] %>% data.frame() %>% rownames_to_column() %>% filter(. > 0) # customer exists and has non-zero similarities to other customers
+# mf1_predicted["411",] %>% data.frame() %>% rownames_to_column() %>% filter(. > 0) # customer exists and has non-zero ratings
+
+# customer_products_bought_wide["411",] %>% data.frame() %>% rownames_to_column() %>% arrange(desc(.)) # only one product with a non-zero
+# product_similarities1["TOP SELLING July Everyday Case",]  %>% data.frame() %>% rownames_to_column() %>% arrange(desc(.)) # product bought exists and has non-zero similarities to other products
 
 ```

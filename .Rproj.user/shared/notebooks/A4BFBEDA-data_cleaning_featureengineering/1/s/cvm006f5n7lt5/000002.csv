@@ -1,0 +1,6 @@
+"0","# justify choosing ""39263"" for a top customers"
+"0","order_items %>%"
+"0","  right_join(orders, by = ""orders_id"") %>%"
+"0","  count(customers_id) %>%"
+"0","  arrange(desc(n)) %>%"
+"0","  head()"
