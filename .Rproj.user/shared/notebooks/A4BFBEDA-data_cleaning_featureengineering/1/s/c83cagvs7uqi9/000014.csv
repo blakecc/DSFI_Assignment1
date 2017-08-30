@@ -1,6 +1,0 @@
-"0","# User bought similarity only"
-"0","customer_based_recommendations(""39263"","
-"0","                                    customer_similarities1,"
-"0","                                    customer_products_bought_wide) %>%"
-"0","  mutate(p_rank = rank(-score)) %>%"
-"0","  select(title, p_rank)"
