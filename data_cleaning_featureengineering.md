@@ -1,68 +1,44 @@
----
-title: "R Notebook"
-author: "Blake Cuningham CNNBLA001"
-output:
-  pdf_document:
-    toc: yes
-    toc_depth: 3
-  html_document: default
-  html_notebook: default
-  github_document:
-    toc: yes
-    toc_depth: 3
----
+R Notebook
+================
+Blake Cuningham CNNBLA001
 
-# Introduction
+-   [Get data into R](#get-data-into-r)
+-   [Create separate data frames for orders, customers, items](#create-separate-data-frames-for-orders-customers-items)
+-   [Clean the order items table](#clean-the-order-items-table)
+-   [Add features to customers table](#add-features-to-customers-table)
+-   [Simple bought products approach (i.e. user-based collaborative filtering)](#simple-bought-products-approach-i.e.-user-based-collaborative-filtering)
+-   [Item-based approach](#item-based-approach)
+-   [Matrix factorization](#matrix-factorization)
+-   [Customer similarities with user data](#customer-similarities-with-user-data)
+-   [Combine recommendations](#combine-recommendations)
 
-The goal of this assignment is to produce a recommender system to help recommend products to Getwine.co.za customers. There are several ways to do this, but the approach that will be taken here will exhibit the following characteristics:
-
- * The recommender will **not** exclude products if the customer has bought the item before. While a goal of the recommender is to help customers discover new wines, the main goal should be to help get them to buy more wine. Reminding them about wines they may have ordered before (and hopefully liked) will aid this.
- * The final recommender will take an ensemble approach combine 4 different recommendation methods:
-  + Simple recommendation based on purchase profile similarity to other customers
-  + Recommendation based on purchase profile similarity to other customers, *and* demographic similarity to other customers
-  + Simple recommendation purchased product similarity to other products
-  + Implied rating recommendation based on predicting would-be ratings for all products
-  
-The document will go through implementing this approach on a step-by-step basis, showing intermediate outputs, and ultimately displaying the final recommendations for two specific customers (41777 and 411).
-
-# Preparing the data
-## Load required packages
-
-```{r}
-
+``` r
 rm(list = ls())
 
 suppressWarnings(suppressMessages(library(data.table)))
 suppressWarnings(suppressMessages(library(tidyverse)))
 suppressWarnings(suppressMessages(library(lubridate)))
 suppressWarnings(suppressMessages(library(stringr)))
-
 ```
 
-## Get original data into R
+Get data into R
+---------------
 
-The `fread` command from the *data.table* package is used because it is significantly faster than `read.csv`.
-
-```{r}
-
+``` r
 orders_orig <- data.frame(fread("data/orders.csv", header = T))
 order_items <- data.frame(fread("data/order-items.csv", header = T))
-
 ```
 
-## Create separate data frames for orders, customers, items
+Create separate data frames for orders, customers, items
+--------------------------------------------------------
 
-In order to make the data more manageable, it is initially split into three tables - this puts it into "normal form" making it easier to work with the correct data structure in isolation. Specifically, a *customers* and an *orders* (without duplicate customer information) table are created.
-
-```{r}
-# create customers data frame with all static customer data
+``` r
 customers <- orders_orig %>%
   select(customers_id, customers_gender, customers_dob) %>%
   unique() %>%
   mutate(customers_id = as.numeric(customers_id)) %>%
   arrange(customers_id)
 
-# create orders data frame without static customer data
 orders <- orders_orig %>%
   select(-c(customers_gender, customers_dob)) %>%
   unique() %>%
@@ -70,13 +46,10 @@ orders <- orders_orig %>%
   arrange(customers_id)
 ```
 
-## Clean the order items table
+Clean the order items table
+---------------------------
 
-The products in the *order_items* table contains some imperfect data. In general, the *quantity* measure is a multiple of 6, but sometimes it isn't - this may or may not be correct. Therefore, where it can be seen that it is incorrect, the figure is changed.
-
-Additionally, all products with a price lower than 0 are removed as these were generally not wine related products, or were special accounting entries not relevant for customers.
-
-```{r}
+``` r
 order_items <- order_items %>%
   mutate(products_price = as.numeric(products_price)) %>%
   mutate(products_quantity = as.numeric(products_quantity)) %>%
@@ -88,19 +61,37 @@ order_items <- order_items %>%
   mutate(products_quantity = ifelse(str_detect(products_name, "Budget White"), products_quantity * 12, products_quantity)) %>%
   mutate(products_quantity = ifelse(str_detect(products_name, "30 bottles"), products_quantity * 30, products_quantity)) %>%
   mutate(products_quantity = ifelse(str_detect(products_name, "Voucher"), products_quantity * 6, products_quantity))
+
+
+# TODO: 
+
+# mixed cases contain 12 bottles (6 red, 6 white)
+# seems all order items with "case" in the name, and not a multiple of 6 (or 12?) are actually cases and should be multiplied by 12
+# assuming assorted is 12 too
+# wynklub seems to be just one bottle
+# gift vouchers are tricky ... assume the intention is to buy 6 bottles
+# remove "as arranged by Johan"?
+# remove wine years?
+
+# table(order_items$products_quantity)
+# order_items[order_items$products_quantity == 1 & !str_detect(order_items$products_name, "wynklub"),]
+# order_items[str_detect(order_items$products_name, "Johan"),]
 ```
 
-## Add features to customers table
+Add features to customers table
+-------------------------------
 
-Later in this document a recommender will be built which uses demographic data in order to add to the customer similarity calculation
-
-```{r}
+``` r
 # number of orders
 
 customers <- orders %>%
   count(customers_id) %>%
   right_join(customers)
+```
 
+    ## Joining, by = "customers_id"
+
+``` r
 colnames(customers)[colnames(customers) == "n"] <- "order_count"
 
 # age and age group
@@ -117,11 +108,19 @@ customer_item_prices <- left_join(orders, order_items) %>%
   group_by(customers_id) %>%
   summarise("order_amount" = sum(total_paid), "item_count" = sum(products_quantity)) %>%
   mutate(avg_item = order_amount / item_count)
+```
 
+    ## Joining, by = "orders_id"
+
+``` r
 customers <- customer_item_prices %>%
   select(customers_id, avg_item) %>%
   right_join(customers)
+```
 
+    ## Joining, by = "customers_id"
+
+``` r
 customers <- customers %>%
   mutate(customer_price_group = ifelse(avg_item >= 500, "luxury",
                                         ifelse(avg_item >= 150, "premium",
@@ -135,19 +134,22 @@ customers <- customers %>%
   left_join(orders) %>%
   select(-c(date_purchased, orders_id, order_total)) %>%
   distinct(customers_id, .keep_all = T)
+```
 
+    ## Joining, by = "customers_id"
+
+``` r
 # Order count class
 customers <- customers %>%
   mutate(order_freq = ifelse(order_count >= 3, "frequent",
                              ifelse(order_count >= 2, "twice",
                                     "once"))) %>%
   mutate(order_freq = as.factor(order_freq))
-
 ```
 
 Identify top and bottom customers by number of unique products bought
 
-```{r}
+``` r
 # justify choosing "41777" for a top customers
 order_items %>%
   right_join(orders, by = "orders_id") %>%
@@ -156,7 +158,16 @@ order_items %>%
   head(5) %>%
   knitr::kable(caption = "5 customers with highest variety of products bought")
 ```
-```{r}
+
+|  customers\_id|    n|
+|--------------:|----:|
+|           1022|   16|
+|          36892|   16|
+|          29302|   13|
+|          39263|   13|
+|          41777|   12|
+
+``` r
 # justify choosings "411" for a bottom customer
 order_items %>%
   right_join(orders, by = "orders_id") %>%
@@ -165,7 +176,17 @@ order_items %>%
   head() %>%
   knitr::kable(caption = "5 customers with lowest variety of products bought")
 ```
-```{r}
+
+|  customers\_id|    n|
+|--------------:|----:|
+|             65|    1|
+|            163|    1|
+|            411|    1|
+|            506|    1|
+|            624|    1|
+|            889|    1|
+
+``` r
 temp <- customers %>%
   filter(customers_id == "41777" |
            customers_id == "411") %>%
@@ -176,16 +197,29 @@ temp <- customers %>%
 
 colnames(temp) <- c("Low product variety", "High product variety")
 knitr::kable(temp, caption = "Comparison of two example customers")
-  
-  # knitr::kable()
-
 ```
 
+|                        | Low product variety | High product variety |
+|------------------------|:--------------------|:---------------------|
+| customers\_id          | 411                 | 41777                |
+| avg\_item              | 720.0000            | 137.9333             |
+| order\_count           | 1                   | 3                    |
+| customers\_gender      | f                   |                      |
+| customers\_dob         | 1944-05-29          | 1950-12-25           |
+| customer\_age\_group   | old                 | old                  |
+| customer\_price\_group | luxury              | economy              |
+| countries\_name        | Cape Town           | Cape Town            |
+| payment\_method        | Bank Deposit/EFT    | Credit Card Payment  |
+| order\_freq            | once                | frequent             |
 
-## Simple bought products approach (i.e. user-based collaborative filtering)
+``` r
+  # knitr::kable()
+```
 
-```{r}
+Simple bought products approach (i.e. user-based collaborative filtering)
+-------------------------------------------------------------------------
 
+``` r
 # get matrix of "bought wines" i.e. customer_id as rows and wines as columns
 
 customer_products_bought_tall <- order_items %>%
@@ -194,7 +228,11 @@ customer_products_bought_tall <- order_items %>%
   select(customers_id, products_name) %>%
   unique() %>%
   mutate(bought = 1)
+```
 
+    ## Joining, by = "orders_id"
+
+``` r
 customer_products_bought_wide <- customer_products_bought_tall %>%
   complete(customers_id, products_name, fill = list(bought = 0)) %>%
   spread(key = products_name, value = bought)
@@ -205,8 +243,7 @@ customer_products_bought_wide <- as.matrix(customer_products_bought_wide[,-1])
 row.names(customer_products_bought_wide) <- sorted_customers_id
 ```
 
-```{r, eval=F}
-
+``` r
 cosine_sim <- function(a,b){crossprod(a,b)/sqrt(crossprod(a)*crossprod(b))}
 temp_func <- Vectorize(function(x, y) cosine_sim(customer_products_bought_wide[x,], customer_products_bought_wide[y,]))
 
@@ -222,9 +259,9 @@ saveRDS(customer_similarities1, "output/customer_similarities1.rds")
 
 # max(customer_products_bought_wide[263,])
 # cosine_sim(customer_products_bought_wide[3,], customer_products_bought_wide[3,])
-
 ```
-```{r}
+
+``` r
 customer_similarities1 <- readRDS("output/customer_similarities1.rds")
 
 
@@ -239,10 +276,19 @@ customer_similarities1 <- readRDS("output/customer_similarities1.rds")
 # # customer_similarities1["39263",] %*% customer_products_bought_wide
 # dim(customer_similarities1["39263",])
 dim(customer_products_bought_wide)
+```
+
+    ## [1] 999 323
+
+``` r
 # dim(temp)
 
 dim(customer_products_bought_wide[0,])
+```
 
+    ## [1]   0 323
+
+``` r
 customer_scores <- data.frame(product = colnames(customer_products_bought_wide),
                               score = as.vector(customer_similarities1["39263",] %*% customer_products_bought_wide),
                               bought = customer_products_bought_wide["39263",])
@@ -254,8 +300,15 @@ customer_scores %>%
   head()
 ```
 
-```{r}
+    ##                                         product     score bought
+    ## 1              Le Bonheur Prima 2013 unlabelled 18.811557      1
+    ## 2 Le Bonheur Cabernet Sauvignon 2014 unlabelled  7.501758      0
+    ## 3                     Clos Malverne Shiraz 2014  6.479492      1
+    ## 4                             Raka Spliced 2014  3.309603      0
+    ## 5           Le Bonheur Tricorne 2012 unlabelled  3.303285      0
+    ## 6              Neil Ellis Sincerely Shiraz 2016  2.897555      1
 
+``` r
 customer_based_recommendations <- function(customer, customer_similarities, bought_wines){
   
   # turn into character if not already
@@ -277,15 +330,24 @@ customer_based_recommendations <- function(customer, customer_similarities, boug
 }
 
 head(customer_based_recommendations("39263", customer_similarities1, customer_products_bought_wide))
-
 ```
 
-## Item-based approach
+    ##                                                  product    score
+    ## 1          Le Bonheur Cabernet Sauvignon 2014 unlabelled 7.501758
+    ## 2                                      Raka Spliced 2014 3.309603
+    ## 3                    Le Bonheur Tricorne 2012 unlabelled 3.303285
+    ## 4                      Nitida Roxia Sauvignon Blanc 2016 2.844950
+    ## 5 Knorhoek Shiraz/Cabernet Franc/Cabernet Sauvignon 2015 2.817521
+    ## 6                  Asara Vineyard Collection Shiraz 2012 2.695650
 
-```{r}
+Item-based approach
+-------------------
+
+``` r
 products_customers_wide <- t(customer_products_bought_wide)
 ```
-```{r, eval=F}
+
+``` r
 temp_func <- Vectorize(function(x, y) cosine_sim(products_customers_wide[x,], products_customers_wide[y,]))
 
 product_similarities1 <- outer(seq_len(nrow(products_customers_wide)),
@@ -298,10 +360,12 @@ colnames(product_similarities1) <- row.names(products_customers_wide)
 
 saveRDS(product_similarities1, "output/product_similarities1.rds")
 ```
-```{r}
+
+``` r
 product_similarities1 <- readRDS("output/product_similarities1.rds")
 ```
-```{r}
+
+``` r
 user_bought <- customer_products_bought_tall %>% 
         filter(customers_id == "39263") %>% 
         select(products_name) %>% 
@@ -316,9 +380,19 @@ product_scores %>%
   filter(bought == 0) %>%
   arrange(desc(score)) %>%
   head()
-
 ```
-```{r}
+
+    ## # A tibble: 6 x 3
+    ##                                         product     score bought
+    ##                                           <chr>     <dbl>  <dbl>
+    ## 1             Vrede en Lust White Mischief 2016 1.0773503      0
+    ## 2              Jordan The Prospector Syrah 2015 0.8912014      0
+    ## 3                 Vrede en Lust Cotes De Savoye 0.8625711      0
+    ## 4 Le Bonheur Cabernet Sauvignon 2014 unlabelled 0.8198409      0
+    ## 5                        Iona One Man Band 2011 0.7618017      0
+    ## 6                   Remhoogte Estate Cape Blend 0.7618017      0
+
+``` r
 product_based_recommendations <- function(customer, product_similarities, bought_products){
   
   # turn into character if not already
@@ -337,7 +411,19 @@ product_based_recommendations <- function(customer, product_similarities, bought
 }
 
 head(product_based_recommendations("39263", product_similarities1, products_customers_wide))
+```
 
+    ## # A tibble: 6 x 2
+    ##                                         product     score
+    ##                                           <chr>     <dbl>
+    ## 1             Vrede en Lust White Mischief 2016 1.0773503
+    ## 2              Jordan The Prospector Syrah 2015 0.8912014
+    ## 3                 Vrede en Lust Cotes De Savoye 0.8625711
+    ## 4 Le Bonheur Cabernet Sauvignon 2014 unlabelled 0.8198409
+    ## 5                        Iona One Man Band 2011 0.7618017
+    ## 6                   Remhoogte Estate Cape Blend 0.7618017
+
+``` r
 # undebug(product_based_recommendations)
 # test <- "411"
 # test <- row.names(product_similarities1)[products_customers_wide[,test] == TRUE]
@@ -348,17 +434,16 @@ head(product_based_recommendations("39263", product_similarities1, products_cust
 
 
 # head(product_based_recommendations("39263", product_similarities1, products_customers_wide)) %in% head(customer_based_recommendations("39263", customer_similarities1, customer_products_bought_wide))
-
-
 ```
 
-## Matrix factorization
+Matrix factorization
+--------------------
 
 Proxy for wine rating? Number of bottles?
 
 Some combination of quantity and price ... i.e. something may be really good, but expensive. Something may be mediocre but cheap. Number of bottles bias towards cheap, price per bottle bias toward expensive. Some combination of the two? And probably a log of that combination in order to reduce impact of MASSIVE orders.
 
-```{r}
+``` r
 product_ratings <- order_items %>%
   mutate(log_order_val = log(products_quantity * products_price)) %>% # create ratings proxy
   inner_join(orders) %>%
@@ -369,19 +454,20 @@ product_ratings <- order_items %>%
   # complete(customers_id, products_name, fill = list(ratings_proxy = NA))
   complete(customers_id, products_name) %>%
   spread(key = products_name, value = rating_proxy)
+```
 
+    ## Joining, by = "orders_id"
+
+``` r
 # product_ratings %>%
 #   gather(-customers_id, key = products_name, value = rating_proxy)
 
 products_list <- as.character(unlist(product_ratings[,1]))
 product_ratings <- as.matrix(product_ratings[,-1])
 row.names(product_ratings) <- products_list
-
 ```
 
-
-```{r}
-
+``` r
 ranks <- c(1, 2, 3, 4, 5, 10, 20, 50, 100, 200)
 # ranks <- c(1, 2, 3)
 mf_acc <- NULL
@@ -394,8 +480,8 @@ pr_train[pr_sample_ind] <- NA
 pr_test <- cbind(product_ratings)
 pr_test[-pr_sample_ind] <- NA
 ```
-```{r, eval=F}
 
+``` r
 for (rank in ranks){
   set.seed(1)
 
@@ -426,17 +512,17 @@ rank_test_results <- data.frame("Rank" = ranks, "Train_acc" = mf_acc, "Test_acc"
 
 saveRDS(rank_test_results, "output/rank_test_results.rds")
 ```
-```{r}
 
-
+``` r
 check_matrix <- matrix(rep(mean(pr_train, na.rm = T), length(pr_test)), dim(pr_test)[1], dim(pr_test)[2])
 check_errors <- (check_matrix - pr_test)^2
 check_accuracy <- sqrt(mean(check_errors[!is.na(pr_test)]))
 check_accuracy
-
-
 ```
-```{r, fig.cap= "Mean squared error of matrix ranks"}
+
+    ## [1] 1.036206
+
+``` r
 rank_test_results <- readRDS("output/rank_test_results.rds")
 
 ggplot(rank_test_results) +
@@ -446,11 +532,17 @@ ggplot(rank_test_results) +
   # scale_color_manual(values = c("Train", "Test"))
   scale_color_discrete("Accuracy") +
   theme_light()
-
-sum(is.na(product_ratings)) / length(product_ratings)
-
 ```
-```{r, eval=F}
+
+![Mean squared error of matrix ranks](data_cleaning_featureengineering_files/figure-markdown_github/unnamed-chunk-22-1.png)
+
+``` r
+sum(is.na(product_ratings)) / length(product_ratings)
+```
+
+    ## [1] 0.9910902
+
+``` r
 library(NNLM)
 
 set.seed(7)
@@ -465,23 +557,32 @@ mf1_decomp <- nnmf(A = product_ratings,
 
 saveRDS(mf1_decomp, "models/mf1_decomp.rds")
 ```
-```{r}
+
+``` r
 mf1_decomp <- readRDS("models/mf1_decomp.rds")
 
 # Top choices for our user
 mf1_predicted <- mf1_decomp$W %*% mf1_decomp$H
 mf1_predicted[0,head(order(mf1_predicted["411",], decreasing = T))]
-
-# Top wines based on H factor
-mf1_predicted[0,head(order(mf1_decomp$H, decreasing = T))]
-
 ```
 
+    ##      Everyday Red || 12 Assorted Bin 1 Budget Red || 12 Assorted
+    ##      Luxury Red || Assorted Budget Mixed || Assorted White & Red
+    ##      TOP SELLING May RED Case JORDAN Lifestyle Case 12-pack
 
+``` r
+# Top wines based on H factor
+mf1_predicted[0,head(order(mf1_decomp$H, decreasing = T))]
+```
 
-## Customer similarities with user data
-```{r}
+    ##      Everyday Red || 12 Assorted Bin 1 Budget Red || 12 Assorted
+    ##      Luxury Red || Assorted Budget Mixed || Assorted White & Red
+    ##      TOP SELLING May RED Case JORDAN Lifestyle Case 12-pack
 
+Customer similarities with user data
+------------------------------------
+
+``` r
 # get matrix of "bought wines" i.e. customer_id as rows and wines as columns
 
 customer_products_bought_tall_2 <- order_items %>%
@@ -490,7 +591,11 @@ customer_products_bought_tall_2 <- order_items %>%
   select(customers_id, products_name) %>%
   unique() %>%
   mutate(bought = 1)
+```
 
+    ## Joining, by = "orders_id"
+
+``` r
 # create customer attributes data to adD
 ## customer age group
 customer_products_bought_tall_2 <- customers %>%
@@ -563,8 +668,7 @@ customer_products_bought_wide_2 <- as.matrix(customer_products_bought_wide_2[,-1
 row.names(customer_products_bought_wide_2) <- sorted_customers_id
 ```
 
-```{r, eval=F}
-
+``` r
 cosine_sim <- function(a,b){crossprod(a,b)/sqrt(crossprod(a)*crossprod(b))}
 temp_func_2 <- Vectorize(function(x, y) cosine_sim(customer_products_bought_wide_2[x,], customer_products_bought_wide_2[y,]))
 
@@ -580,26 +684,43 @@ saveRDS(customer_similarities2, "output/customer_similarities2.rds")
 
 # max(customer_products_bought_wide[263,])
 # cosine_sim(customer_products_bought_wide[3,], customer_products_bought_wide[3,])
-
 ```
-```{r}
+
+``` r
 customer_similarities2 <- readRDS("output/customer_similarities2.rds")
 
 head(customer_based_recommendations("39263",
                                     customer_similarities1,
                                     customer_products_bought_wide))
+```
 
+    ##                                                  product    score
+    ## 1          Le Bonheur Cabernet Sauvignon 2014 unlabelled 7.501758
+    ## 2                                      Raka Spliced 2014 3.309603
+    ## 3                    Le Bonheur Tricorne 2012 unlabelled 3.303285
+    ## 4                      Nitida Roxia Sauvignon Blanc 2016 2.844950
+    ## 5 Knorhoek Shiraz/Cabernet Franc/Cabernet Sauvignon 2015 2.817521
+    ## 6                  Asara Vineyard Collection Shiraz 2012 2.695650
+
+``` r
 cs_2_indexedBy1 <- customer_similarities2[row.names(customer_similarities1),colnames(customer_similarities1)]
 head(customer_based_recommendations("39263",
                                     cs_2_indexedBy1,
                                     customer_products_bought_wide))
-
 ```
-  
-## Combine recommendations
 
-```{r}
+    ##                                                  product    score
+    ## 1                                Personalised Mixed Case 29.61147
+    ## 2 Knorhoek Shiraz/Cabernet Franc/Cabernet Sauvignon 2015 28.80357
+    ## 3                                      Raka Spliced 2014 26.29577
+    ## 4          Le Bonheur Cabernet Sauvignon 2014 unlabelled 25.81791
+    ## 5                      Nitida Roxia Sauvignon Blanc 2016 20.43521
+    ## 6                    Phizante Kraal Sauvignon Blanc 2016 17.85821
 
+Combine recommendations
+-----------------------
+
+``` r
 ensemble_recommender <- function(customer, context_similarities, no_context_similarities, product_similarities, wide_customer_products_matrix, predicted_ratings){
   
   # Convert to character
@@ -650,7 +771,18 @@ head(suppressWarnings(ensemble_recommender("39263",
                      wide_customer_products_matrix = customer_products_bought_wide,
                      predicted_ratings = mf1_predicted))) %>%
   knitr::kable()
+```
 
+| product                                       |  p\_rank|
+|:----------------------------------------------|--------:|
+| Le Bonheur Tricorne 2012 unlabelled           |        1|
+| Le Bonheur Cabernet Sauvignon 2014 unlabelled |        2|
+| Asara Vineyard Collection Shiraz 2012         |        3|
+| Flagstone Dragon Tree Cape Blend 2014         |        4|
+| Capaia One Flagship Red 2010                  |        5|
+| Vrede en Lust Lady J Syrah 2013               |        6|
+
+``` r
 # debug(ensemble_recommender)
 # undebug(ensemble_recommender)
 
@@ -674,5 +806,4 @@ head(suppressWarnings(ensemble_recommender("39263",
 
 # customer_products_bought_wide["411",] %>% data.frame() %>% rownames_to_column() %>% arrange(desc(.)) # only one product with a non-zero
 # product_similarities1["TOP SELLING July Everyday Case",]  %>% data.frame() %>% rownames_to_column() %>% arrange(desc(.)) # product bought exists and has non-zero similarities to other products
-
 ```
