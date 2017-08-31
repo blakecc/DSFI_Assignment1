@@ -7,10 +7,10 @@ output: html_notebook
 
 rm(list = ls())
 
-suppressMessages(library(data.table))
-suppressMessages(library(tidyverse))
-suppressMessages(library(lubridate))
-suppressMessages(library(stringr))
+suppressWarnings(suppressMessages(library(data.table)))
+suppressWarnings(suppressMessages(library(tidyverse)))
+suppressWarnings(suppressMessages(library(lubridate)))
+suppressWarnings(suppressMessages(library(stringr)))
 
 ```
 
@@ -105,8 +105,26 @@ customers <- customer_item_prices %>%
   select(customers_id, avg_item) %>%
   right_join(customers)
 
-# customers %>%
-#   arrange(desc(order_count))
+customers <- customers %>%
+  mutate(customer_price_group = ifelse(avg_item >= 500, "luxury",
+                                        ifelse(avg_item >= 150, "premium",
+                                               ifelse(avg_item >= 50, "economy",
+                                                      "budget")))) %>%
+  mutate(customer_price_group = as.factor(customer_price_group))
+
+
+# Add in country and payment method
+customers <- customers %>%
+  left_join(orders) %>%
+  select(-c(date_purchased, orders_id, order_total)) %>%
+  distinct(customers_id, .keep_all = T)
+
+# Order count class
+customers <- customers %>%
+  mutate(order_freq = ifelse(order_count >= 3, "frequent",
+                             ifelse(order_count >= 2, "twice",
+                                    "once"))) %>%
+  mutate(order_freq = as.factor(order_freq))
 
 ```
 
@@ -231,10 +249,10 @@ customer_based_recommendations("39263", customer_similarities1, customer_product
 
 ## Item-based approach
 
-```{r, eval=F}
-
+```{r}
 products_customers_wide <- t(customer_products_bought_wide)
-
+```
+```{r, eval=F}
 temp_func <- Vectorize(function(x, y) cosine_sim(products_customers_wide[x,], products_customers_wide[y,]))
 
 product_similarities1 <- outer(seq_len(nrow(products_customers_wide)),
@@ -284,7 +302,7 @@ product_based_recommendations <- function(customer, product_similarities, bought
   
 }
 
-product_based_recommendations("411", product_similarities1, products_customers_wide)
+product_based_recommendations("39263", product_similarities1, products_customers_wide)
 
 # undebug(product_based_recommendations)
 # test <- "411"
@@ -328,7 +346,7 @@ row.names(product_ratings) <- products_list
 ```
 
 
-```{r, eval=F}
+```{r}
 
 ranks <- c(1, 2, 3, 4, 5, 10, 20, 50, 100, 200)
 # ranks <- c(1, 2, 3)
@@ -341,6 +359,8 @@ pr_train <- cbind(product_ratings)
 pr_train[pr_sample_ind] <- NA
 pr_test <- cbind(product_ratings)
 pr_test[-pr_sample_ind] <- NA
+```
+```{r, eval=F}
 
 for (rank in ranks){
   set.seed(1)
@@ -383,7 +403,7 @@ check_accuracy
 
 ```
 ```{r}
-# rank_test_results <- readRDS("output/rank_test_results.rds")
+rank_test_results <- readRDS("output/rank_test_results.rds")
 
 ggplot(rank_test_results) +
   geom_line(aes(x = Rank, y = Train_acc, color = "Train")) +
@@ -412,6 +432,7 @@ mf1_decomp <- nnmf(A = product_ratings,
 saveRDS(mf1_decomp, "models/mf1_decomp.rds")
 ```
 ```{r}
+mf1_decomp <- readRDS("models/mf1_decomp.rds")
 
 # Top choices for our user
 mf1_predicted <- mf1_decomp$W %*% mf1_decomp$H
@@ -436,12 +457,8 @@ customer_products_bought_tall_2 <- order_items %>%
   unique() %>%
   mutate(bought = 1)
 
-# create customer attributes data to add
-# customers %>%
-#   select(customers_id, customers_gender, customer_age_group) %>%
-#   mutate(bought = 1) %>%
-#   complete(customers_id, customers_gender, customer_age_group, fill = list(bought = 0))
-
+# create customer attributes data to adD
+## customer age group
 customer_products_bought_tall_2 <- customers %>%
   select(customers_id, customer_age_group) %>%
   mutate(bought = 1) %>%
@@ -449,6 +466,7 @@ customer_products_bought_tall_2 <- customers %>%
   rename(products_name = customer_age_group) %>%
   rbind(customer_products_bought_tall_2)
 
+## customer gender
 customer_products_bought_tall_2 <- customers %>%
   select(customers_id, customers_gender) %>%
   mutate(bought = 1) %>%
@@ -456,6 +474,51 @@ customer_products_bought_tall_2 <- customers %>%
   rename(products_name = customers_gender) %>%
   rbind(customer_products_bought_tall_2)
 
+## customer price group
+customer_products_bought_tall_2 <- customers %>%
+  select(customers_id, customer_price_group) %>%
+  mutate(bought = 1) %>%
+  complete(customers_id, customer_price_group, fill = list(bought = 0)) %>%
+  rename(products_name = customer_price_group) %>%
+  drop_na() %>%
+  rbind(customer_products_bought_tall_2)
+
+
+## customer countries
+customer_products_bought_tall_2 <- customers %>%
+  select(customers_id, countries_name) %>%
+  mutate(bought = 1) %>%
+  complete(customers_id, countries_name, fill = list(bought = 0)) %>%
+  rename(products_name = countries_name) %>%
+  drop_na() %>%
+  filter(products_name != "") %>%
+  rbind(customer_products_bought_tall_2)
+
+
+
+## customer payment method
+customer_products_bought_tall_2 <- customers %>%
+  select(customers_id, payment_method) %>%
+  mutate(bought = 1) %>%
+  complete(customers_id, payment_method, fill = list(bought = 0)) %>%
+  rename(products_name = payment_method) %>%
+  drop_na() %>%
+  filter(products_name != "") %>%
+  rbind(customer_products_bought_tall_2)
+
+
+## order frequency
+customer_products_bought_tall_2 <- customers %>%
+  select(customers_id, order_freq) %>%
+  mutate(bought = 1) %>%
+  complete(customers_id, order_freq, fill = list(bought = 0)) %>%
+  rename(products_name = order_freq) %>%
+  drop_na() %>%
+  filter(products_name != "") %>%
+  rbind(customer_products_bought_tall_2)
+
+
+## spread data into matrix shape
 customer_products_bought_wide_2 <- customer_products_bought_tall_2 %>%
   complete(customers_id, products_name, fill = list(bought = 0)) %>%
   spread(key = products_name, value = bought)
@@ -467,9 +530,6 @@ row.names(customer_products_bought_wide_2) <- sorted_customers_id
 ```
 
 ```{r, eval=F}
-
-# cosine_sim <- function(a,b){crossprod(a,b)/sqrt(crossprod(a)*crossprod(b))}
-
 
 cosine_sim <- function(a,b){crossprod(a,b)/sqrt(crossprod(a)*crossprod(b))}
 temp_func_2 <- Vectorize(function(x, y) cosine_sim(customer_products_bought_wide_2[x,], customer_products_bought_wide_2[y,]))
@@ -489,6 +549,7 @@ saveRDS(customer_similarities2, "output/customer_similarities2.rds")
 
 ```
 ```{r}
+customer_similarities2 <- readRDS("output/customer_similarities2.rds")
 
 head(customer_based_recommendations("39263",
                                     customer_similarities1,
@@ -548,7 +609,7 @@ ensemble_recommender <- function(customer, context_similarities, no_context_simi
   return(customer_recs)
 }
 
-suppressWarnings(ensemble_recommender("624",
+suppressWarnings(ensemble_recommender("39263",
                      context_similarities = cs_2_indexedBy1,
                      no_context_similarities = customer_similarities1,
                      product_similarities = product_similarities1,

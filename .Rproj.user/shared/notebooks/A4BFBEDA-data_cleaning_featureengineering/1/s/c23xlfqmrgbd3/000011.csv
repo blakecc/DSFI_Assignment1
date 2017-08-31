@@ -1,8 +1,0 @@
-"0","# undebug(product_based_recommendations)"
-"0","# test <- ""411"""
-"0","# test <- row.names(product_similarities1)[products_customers_wide[,test] == TRUE]"
-"0","# tibble(product = row.names(product_similarities1), "
-"0","#                         score = apply(data.frame(product_similarities1[,test]),1,sum),"
-"0","#                         bought = products_customers_wide[,""411""]) %>%"
-"0","#   arrange(desc(score))"
-"0","# head(product_based_recommendations(""39263"", product_similarities1, products_customers_wide)) %in% head(customer_based_recommendations(""39263"", customer_similarities1, customer_products_bought_wide))"
