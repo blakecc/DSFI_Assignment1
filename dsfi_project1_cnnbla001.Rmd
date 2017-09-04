@@ -1,5 +1,5 @@
 ---
-title: "R Notebook"
+title: "Data Science for Industry Project 1"
 author: "Blake Cuningham CNNBLA001"
 output:
   pdf_document:
@@ -11,32 +11,32 @@ output:
     toc: yes
     toc_depth: 3
 ---
-
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
 # Introduction
 
 The goal of this assignment is to produce a recommender system to help recommend products to Getwine.co.za customers. There are several ways to do this, but the approach that will be taken here will exhibit the following characteristics:
 
- * The recommender will **not** exclude products if the customer has bought the item before. While a goal of the recommender is to help customers discover new wines, the main goal should be to help get them to buy more wine. Reminding them about wines they may have ordered before (and hopefully liked) will aid this.
- * The final recommender will take an ensemble approach combine 4 different recommendation methods:
-  + Simple recommendation based on purchase profile similarity to other customers
-  + Recommendation based on purchase profile similarity to other customers, *and* demographic similarity to other customers
-  + Simple recommendation purchased product similarity to other products
-  + Implied rating recommendation based on predicting would-be ratings for all products
+ * The recommender will **not** exclude products if the customer has bought the item before. While a goal of the recommender is to help customers discover new wines, the main goal should be to help get them to buy more wine. Reminding customers about wines they may have ordered before (and hopefully liked) should aid this.
+ * The final recommender will take an ensemble approach combining four different recommendation methods:
+  + Simple recommendation based on purchase profile similarity to other customers.
+  + Simple recommendation based on purchased product similarity to other products.
+  + Implied rating recommendation based on predicting would-be ratings for all products.
+  + Recommendation based on purchase profile similarity to other customers, *and* demographic similarity to other customers.
   
-The document will go through implementing this approach on a step-by-step basis, showing intermediate outputs, and ultimately displaying the final recommendations for two specific customers (41777 and 411).
+The document will go through implementing this approach on a step-by-step basis, showing intermediate outputs, and ultimately displaying the final recommendations for two specific customers: 41777, and 411.
 
 # Preparing the data
 ## Load required packages
 
 ```{r}
-
 rm(list = ls())
 
 suppressWarnings(suppressMessages(library(data.table)))
 suppressWarnings(suppressMessages(library(tidyverse)))
 suppressWarnings(suppressMessages(library(lubridate)))
 suppressWarnings(suppressMessages(library(stringr)))
-
 ```
 
 ## Get original data into R
@@ -44,10 +44,8 @@ suppressWarnings(suppressMessages(library(stringr)))
 The `fread` command from the *data.table* package is used because it is significantly faster than `read.csv`.
 
 ```{r}
-
 orders_orig <- data.frame(fread("data/orders.csv", header = T))
 order_items <- data.frame(fread("data/order-items.csv", header = T))
-
 ```
 
 ## Create separate data frames for orders, customers, items
@@ -81,22 +79,34 @@ order_items <- order_items %>%
   mutate(products_price = as.numeric(products_price)) %>%
   mutate(products_quantity = as.numeric(products_quantity)) %>%
   filter(products_price > 0) %>%
-  mutate(products_quantity = ifelse(str_detect(products_name, "case|CASE|Case") & !str_detect(products_name, "6 bottles"), products_quantity * 12, products_quantity)) %>%
-  mutate(products_quantity = ifelse(str_detect(products_name, "case|CASE|Case") & str_detect(products_name, "6 bottles"), products_quantity * 6, products_quantity)) %>%
-  mutate(products_quantity = ifelse(str_detect(products_name, "12 Assorted"), products_quantity * 12, products_quantity)) %>%
-  mutate(products_quantity = ifelse(str_detect(products_name, "Assorted"), products_quantity * 12, products_quantity)) %>%
-  mutate(products_quantity = ifelse(str_detect(products_name, "Budget White"), products_quantity * 12, products_quantity)) %>%
-  mutate(products_quantity = ifelse(str_detect(products_name, "30 bottles"), products_quantity * 30, products_quantity)) %>%
-  mutate(products_quantity = ifelse(str_detect(products_name, "Voucher"), products_quantity * 6, products_quantity))
+  mutate(products_quantity = ifelse(str_detect(products_name, "case|CASE|Case") & !str_detect(products_name, "6 bottles"),
+                                    products_quantity * 12, products_quantity)) %>%
+  mutate(products_quantity = ifelse(str_detect(products_name, "case|CASE|Case") & str_detect(products_name, "6 bottles"),
+                                    products_quantity * 6, products_quantity)) %>%
+  mutate(products_quantity = ifelse(str_detect(products_name, "12 Assorted"),
+                                    products_quantity * 12, products_quantity)) %>%
+  mutate(products_quantity = ifelse(str_detect(products_name, "Assorted"),
+                                    products_quantity * 12, products_quantity)) %>%
+  mutate(products_quantity = ifelse(str_detect(products_name, "Budget White"),
+                                    products_quantity * 12, products_quantity)) %>%
+  mutate(products_quantity = ifelse(str_detect(products_name, "30 bottles"),
+                                    products_quantity * 30, products_quantity)) %>%
+  mutate(products_quantity = ifelse(str_detect(products_name, "Voucher"),
+                                    products_quantity * 6, products_quantity))
 ```
 
 ## Add features to customers table
 
-Later in this document a recommender will be built which uses demographic data in order to add to the customer similarity calculation
+Later, a recommender will be built which uses demographic data in order to add to the customer similarity calculation. In order for this to work, demographic data needs to be generated. Specifically, the following categorical data is created:
+
+* Age group
+* Average bottle price bought
+* Country
+* Payment method
+* Number of times ordered
 
 ```{r}
 # number of orders
-
 customers <- orders %>%
   count(customers_id) %>%
   right_join(customers)
@@ -104,7 +114,6 @@ customers <- orders %>%
 colnames(customers)[colnames(customers) == "n"] <- "order_count"
 
 # age and age group
-
 customers <- customers %>%
   mutate(customers_dob = parse_date_time(customers_dob, "%Y-%m-%d H:%M:%S")) %>%
   mutate(customer_age =  as.period(interval(customers_dob, ymd("20170824")))) %>%
@@ -129,7 +138,6 @@ customers <- customers %>%
                                                       "budget")))) %>%
   mutate(customer_price_group = as.factor(customer_price_group))
 
-
 # Add in country and payment method
 customers <- customers %>%
   left_join(orders) %>%
@@ -142,10 +150,9 @@ customers <- customers %>%
                              ifelse(order_count >= 2, "twice",
                                     "once"))) %>%
   mutate(order_freq = as.factor(order_freq))
-
 ```
 
-Identify top and bottom customers by number of unique products bought
+Identify top and bottom customers by number of unique products bought, then select an example customer from each list. Customers 41777 and 411 are chosen:
 
 ```{r}
 # justify choosing "41777" for a top customers
@@ -165,6 +172,9 @@ order_items %>%
   head() %>%
   knitr::kable(caption = "5 customers with lowest variety of products bought")
 ```
+
+The two selected customers are compared below. They seem different in most categories, and it is expected that their recommendations should be different too.
+
 ```{r}
 temp <- customers %>%
   filter(customers_id == "41777" |
@@ -176,18 +186,17 @@ temp <- customers %>%
 
 colnames(temp) <- c("Low product variety", "High product variety")
 knitr::kable(temp, caption = "Comparison of two example customers")
-  
-  # knitr::kable()
-
 ```
 
-
+# Building recommender systems
 ## Simple bought products approach (i.e. user-based collaborative filtering)
 
+The user-based collaborative filtering approach uses the similarity of customer purchase history as the basis of customer similarity. Wines purchased by customers with a similar purchase history end up being recommended.
+
+The first step to calculating customer similarities is getting the customer data into wide matrix form:
+
 ```{r}
-
 # get matrix of "bought wines" i.e. customer_id as rows and wines as columns
-
 customer_products_bought_tall <- order_items %>%
   select(orders_id, products_name) %>%
   inner_join(orders %>% select(customers_id, orders_id)) %>% # use inner join to avoid customers without purchases?
@@ -205,6 +214,8 @@ customer_products_bought_wide <- as.matrix(customer_products_bought_wide[,-1])
 row.names(customer_products_bought_wide) <- sorted_customers_id
 ```
 
+The next step is to check for similarity between every customer pair. The `outer` function is used instead of a nested loop - this makes very little difference in this case, but would scale well on larger data. Once the similarity matrix is created, it is saved in the project *output* folder and then read back in with the next chunk - this is a simple way to ensure large calculations do not need to be repeated when knitting the final version of this document.
+
 ```{r, eval=F}
 
 cosine_sim <- function(a,b){crossprod(a,b)/sqrt(crossprod(a)*crossprod(b))}
@@ -219,40 +230,12 @@ row.names(customer_similarities1) <- row.names(customer_products_bought_wide)
 colnames(customer_similarities1) <- row.names(customer_products_bought_wide)
 
 saveRDS(customer_similarities1, "output/customer_similarities1.rds")
-
-# max(customer_products_bought_wide[263,])
-# cosine_sim(customer_products_bought_wide[3,], customer_products_bought_wide[3,])
-
 ```
 ```{r}
 customer_similarities1 <- readRDS("output/customer_similarities1.rds")
-
-
-# sort(apply(customer_products_bought_wide, 1, sum), decreasing = T)
-# # Raka Spliced 2014
-# # Le Bonheur Prima 2013 unlabelled
-# # Knorhoek Shiraz/Cabernet Franc/Cabernet Sauvignon 2015
-# 
-# crossprod(customer_products_bought_wide[, "Raka Spliced 2014"], customer_similarities1["39263",])
-# 
-# temp <- customer_similarities1["39263",] %*% customer_products_bought_wide
-# # customer_similarities1["39263",] %*% customer_products_bought_wide
-# dim(customer_similarities1["39263",])
-dim(customer_products_bought_wide)
-# dim(temp)
-
-dim(customer_products_bought_wide[0,])
-
-customer_scores <- data.frame(product = colnames(customer_products_bought_wide),
-                              score = as.vector(customer_similarities1["39263",] %*% customer_products_bought_wide),
-                              bought = customer_products_bought_wide["39263",])
-
-customer_scores %>%
-  # filter(bought == 0) %>%
-  arrange(desc(score)) %>%
-  select(product, score, bought) %>%
-  head()
 ```
+
+Finally, a function that takes a customer, a similarity matrix, and overall customer purchase history, is built to generate the recommendations. The method is to multiply the similarity vector of a customer by overall purchase history in order to weight wine by customer similarity, ending up with a vector of wines and an associated score (wines bought often by similar customers will be recommended higher).
 
 ```{r}
 
@@ -273,14 +256,28 @@ customer_based_recommendations <- function(customer, customer_similarities, boug
     select(-bought) 
   
   return(customer_recom)
-  
 }
-
-head(customer_based_recommendations("39263", customer_similarities1, customer_products_bought_wide))
-
 ```
 
+First, the recommendations for the more frequent customer - 41777:
+
+```{r}
+knitr::kable(head(customer_based_recommendations("41777", customer_similarities1, customer_products_bought_wide)),
+             caption = "User-based collaborative filtering for customer 41777")
+```
+
+And, comparing to the less frequent customer - 411:
+
+```{r}
+knitr::kable(head(customer_based_recommendations("411", customer_similarities1, customer_products_bought_wide)),
+             caption = "User-based collaborative filtering for customer 411")
+```
+
+The recommendations for customer 411 seem inferior to 41777 - there did not seem to be enough customers similar enough to 411. Hence, another approach might be to rather recommend based on item similarity.
+
 ## Item-based approach
+
+The item-based approach is very similar to used-based, except similarities are calculated for products and not customers:
 
 ```{r}
 products_customers_wide <- t(customer_products_bought_wide)
@@ -301,23 +298,9 @@ saveRDS(product_similarities1, "output/product_similarities1.rds")
 ```{r}
 product_similarities1 <- readRDS("output/product_similarities1.rds")
 ```
-```{r}
-user_bought <- customer_products_bought_tall %>% 
-        filter(customers_id == "39263") %>% 
-        select(products_name) %>% 
-        unlist() %>% 
-        as.character()
 
-product_scores <- tibble(product = row.names(product_similarities1), 
-                      score = apply(product_similarities1[,user_bought],1,sum),
-                      bought = products_customers_wide[,as.character(39263)])
+Then, instead of multiplying a single similarity vector by purchase history (as we did with the user-based approach), the columns corresponding to wines bought by the customer are extracted from the product similarity matrix, and then aggregated by row. This leaves a vector of all wines and an associated score - it is expected to give a list recommending wines that were bought by other people who have bought the same wine as the customer.
 
-product_scores %>%
-  filter(bought == 0) %>%
-  arrange(desc(score)) %>%
-  head()
-
-```
 ```{r}
 product_based_recommendations <- function(customer, product_similarities, bought_products){
   
@@ -335,28 +318,33 @@ product_based_recommendations <- function(customer, product_similarities, bought
   return(customer_recom)
   
 }
-
-head(product_based_recommendations("39263", product_similarities1, products_customers_wide))
-
-# undebug(product_based_recommendations)
-# test <- "411"
-# test <- row.names(product_similarities1)[products_customers_wide[,test] == TRUE]
-# tibble(product = row.names(product_similarities1), 
-#                         score = apply(data.frame(product_similarities1[,test]),1,sum),
-#                         bought = products_customers_wide[,"411"]) %>%
-#   arrange(desc(score))
-
-
-# head(product_based_recommendations("39263", product_similarities1, products_customers_wide)) %in% head(customer_based_recommendations("39263", customer_similarities1, customer_products_bought_wide))
-
-
 ```
 
-## Matrix factorization
+The recommendations for the frequent customer show that there are some similar wines that appeared under user-based recommendations:
 
-Proxy for wine rating? Number of bottles?
+```{r}
+knitr::kable(head(product_based_recommendations("41777", product_similarities1, products_customers_wide)),
+             caption = "Item-based recommendation for customer 41777")
+```
 
-Some combination of quantity and price ... i.e. something may be really good, but expensive. Something may be mediocre but cheap. Number of bottles bias towards cheap, price per bottle bias toward expensive. Some combination of the two? And probably a log of that combination in order to reduce impact of MASSIVE orders.
+The recommendations for the infrequent customer are still not very high quality - this will be because they have only ever bought 1 product before, so there is no aggregation happening in the recommender function. However, it is interesting to note that the wines recommended are almost the exact same as the user-based recommendations, but with different ordering.
+
+```{r}
+knitr::kable(head(product_based_recommendations("411", product_similarities1, products_customers_wide)),
+             caption = "Item-based recommendation for customer 411")
+```
+
+
+## Matrix factorization approach
+
+The matrix factorization approach aims to fill in missing data by factorising what we know (in the form of a customer-product ratings matrix) into two other matrices, and then recreating the original data from the factored matrices.
+
+In order to create a matrix of customers and their ratings of products, the first step is to select a "rating" measure. The measure chosen is based on the following assumptions:
+
+* People will pay higher prices for wines they prefer
+* People will buy more of what they like
+
+Hence, the amount of bottles a customer has bought of a wine is multiplied by the per bottle price. The logarithm of this number is then used as the rating (this reduces the impact of very large orders):
 
 ```{r}
 product_ratings <- order_items %>%
@@ -370,23 +358,24 @@ product_ratings <- order_items %>%
   complete(customers_id, products_name) %>%
   spread(key = products_name, value = rating_proxy)
 
-# product_ratings %>%
-#   gather(-customers_id, key = products_name, value = rating_proxy)
-
 products_list <- as.character(unlist(product_ratings[,1]))
 product_ratings <- as.matrix(product_ratings[,-1])
 row.names(product_ratings) <- products_list
 
 ```
 
+The *NNLM* package is used to factorise our ratings matrix. The package's algorithms are far more efficient on large matrices than using the `optim` function approach. While there are several parameters that the `nnmf` function takes, the most important is the rank of factored matrices. More information can be stored in higher ranked matrices, but these may over-fit to the training data. Hence, several ranks are considered, and the rank with the lowest test error identified:
 
 ```{r}
+library(NNLM)
 
+# ranks to consider
 ranks <- c(1, 2, 3, 4, 5, 10, 20, 50, 100, 200)
-# ranks <- c(1, 2, 3)
+# ranks <- c(1, 2, 3) # for testing
 mf_acc <- NULL
 mf_test_acc <- NULL
 
+# create train and test data
 set.seed(1)
 pr_sample_ind <- sample(length(product_ratings), ceiling(0.2*length(product_ratings)))
 pr_train <- cbind(product_ratings)
@@ -395,11 +384,11 @@ pr_test <- cbind(product_ratings)
 pr_test[-pr_sample_ind] <- NA
 ```
 ```{r, eval=F}
-
+# iterate through ranks, and record accuracy of each
 for (rank in ranks){
   set.seed(1)
 
-  decomp <- nnmf(A = pr_train,
+  decomp <- nnlm(A = pr_train,
                  alpha = 3e-3,
                  beta = 3e-3,
                  method = "scd",
@@ -426,16 +415,18 @@ rank_test_results <- data.frame("Rank" = ranks, "Train_acc" = mf_acc, "Test_acc"
 
 saveRDS(rank_test_results, "output/rank_test_results.rds")
 ```
+
+Before plotting the results, the baseline accuracy is calculated. This is simply replacing all missing values with the mean of the training data ratings. The MSE checked against the test data is just over 1:
+
 ```{r}
-
-
 check_matrix <- matrix(rep(mean(pr_train, na.rm = T), length(pr_test)), dim(pr_test)[1], dim(pr_test)[2])
 check_errors <- (check_matrix - pr_test)^2
 check_accuracy <- sqrt(mean(check_errors[!is.na(pr_test)]))
 check_accuracy
-
-
 ```
+
+However, the MSE of the factored matrices on the test data was around 3, and actually worsened with all ranks greater than 1. The training error converged to zero after less than 10 rank.
+
 ```{r, fig.cap= "Mean squared error of matrix ranks"}
 rank_test_results <- readRDS("output/rank_test_results.rds")
 
@@ -445,14 +436,21 @@ ggplot(rank_test_results) +
   geom_vline(aes(xintercept = 1), linetype = 2) +
   # scale_color_manual(values = c("Train", "Test"))
   scale_color_discrete("Accuracy") +
+  ylab("Mean squared-error") +
+  geom_hline(yintercept = check_accuracy, linetype = 3) +
+  annotate("text", label = "Baseline accuracy", x = 50, y = 1.2) +
   theme_light()
-
-sum(is.na(product_ratings)) / length(product_ratings)
-
 ```
-```{r, eval=F}
-library(NNLM)
 
+It therefore does not seem valuable to factor with rank greater than 1, so 1 is chosen as the rank for the recommender. `alpha` and `beta` are equivalent to `lambda` in the approach taken during lectures - they are the regularization parameters for each of the two factored matrices per the below equation:
+
+<img src="figs/codecogs_MF_equation.gif" alt="Equation 1." style="width: 300px;"/>
+
+where $J(X)$ is the penalty applied to the factor matrices.
+
+Additionally, a suitably large maximum number of iterations is chosen, and the *SCD* (Sequential coordinate descent) method is chosen because it is known to converge quickly:
+
+```{r, eval=F}
 set.seed(7)
 
 mf1_decomp <- nnmf(A = product_ratings,
@@ -465,25 +463,32 @@ mf1_decomp <- nnmf(A = product_ratings,
 
 saveRDS(mf1_decomp, "models/mf1_decomp.rds")
 ```
+
+Checking the recommendation for customer 41777 it is seen that the products are very different to the previous two approaches:
+
 ```{r}
 mf1_decomp <- readRDS("models/mf1_decomp.rds")
 
 # Top choices for our user
 mf1_predicted <- mf1_decomp$W %*% mf1_decomp$H
-mf1_predicted[0,head(order(mf1_predicted["411",], decreasing = T))]
-
-# Top wines based on H factor
-mf1_predicted[0,head(order(mf1_decomp$H, decreasing = T))]
-
+t(mf1_predicted[0,head(order(mf1_predicted["41777",], decreasing = T))])
 ```
 
+This odd recommendation makes sense if we look at the components in the product factor (the H matrix):
 
-
-## Customer similarities with user data
 ```{r}
+# Top wines based on H factor
+t(mf1_predicted[0,head(order(mf1_decomp$H, decreasing = T))])
+```
 
+The top wines in the matrix, are the top for customer 41777 - hence what this recommender is really doing is recommending the wines with overall high ratings. This is not completely useless though, and may be a good way to recommend to someone with no previous purchase history.
+
+## User-based recommendations incorporating non-product data
+
+The final approach uses the same method as the first (user-based) approach, except a few extra "products" are added to the matrix that customer similarity was calculated with. These extra products are just demographic variables for each customer, and they should help to improve the similarity calculations. They are added as dummy variables to the customer vs. product matrix:
+
+```{r}
 # get matrix of "bought wines" i.e. customer_id as rows and wines as columns
-
 customer_products_bought_tall_2 <- order_items %>%
   select(orders_id, products_name) %>%
   inner_join(orders %>% select(customers_id, orders_id)) %>% # use inner join to avoid customers without purchases?
@@ -491,7 +496,7 @@ customer_products_bought_tall_2 <- order_items %>%
   unique() %>%
   mutate(bought = 1)
 
-# create customer attributes data to adD
+# create customer attributes data to add
 ## customer age group
 customer_products_bought_tall_2 <- customers %>%
   select(customers_id, customer_age_group) %>%
@@ -517,7 +522,6 @@ customer_products_bought_tall_2 <- customers %>%
   drop_na() %>%
   rbind(customer_products_bought_tall_2)
 
-
 ## customer countries
 customer_products_bought_tall_2 <- customers %>%
   select(customers_id, countries_name) %>%
@@ -527,8 +531,6 @@ customer_products_bought_tall_2 <- customers %>%
   drop_na() %>%
   filter(products_name != "") %>%
   rbind(customer_products_bought_tall_2)
-
-
 
 ## customer payment method
 customer_products_bought_tall_2 <- customers %>%
@@ -540,7 +542,6 @@ customer_products_bought_tall_2 <- customers %>%
   filter(products_name != "") %>%
   rbind(customer_products_bought_tall_2)
 
-
 ## order frequency
 customer_products_bought_tall_2 <- customers %>%
   select(customers_id, order_freq) %>%
@@ -550,7 +551,6 @@ customer_products_bought_tall_2 <- customers %>%
   drop_na() %>%
   filter(products_name != "") %>%
   rbind(customer_products_bought_tall_2)
-
 
 ## spread data into matrix shape
 customer_products_bought_wide_2 <- customer_products_bought_tall_2 %>%
@@ -563,8 +563,9 @@ customer_products_bought_wide_2 <- as.matrix(customer_products_bought_wide_2[,-1
 row.names(customer_products_bought_wide_2) <- sorted_customers_id
 ```
 
-```{r, eval=F}
+The same approach as before calculating similarities:
 
+```{r, eval=F}
 cosine_sim <- function(a,b){crossprod(a,b)/sqrt(crossprod(a)*crossprod(b))}
 temp_func_2 <- Vectorize(function(x, y) cosine_sim(customer_products_bought_wide_2[x,], customer_products_bought_wide_2[y,]))
 
@@ -577,29 +578,38 @@ row.names(customer_similarities2) <- row.names(customer_products_bought_wide_2)
 colnames(customer_similarities2) <- row.names(customer_products_bought_wide_2)
 
 saveRDS(customer_similarities2, "output/customer_similarities2.rds")
-
-# max(customer_products_bought_wide[263,])
-# cosine_sim(customer_products_bought_wide[3,], customer_products_bought_wide[3,])
-
 ```
+
+Then, when actually producing the recommendations the original recommender function is used, and just the new similarity matrix is passed as an argument:
+
 ```{r}
 customer_similarities2 <- readRDS("output/customer_similarities2.rds")
 
-head(customer_based_recommendations("39263",
-                                    customer_similarities1,
-                                    customer_products_bought_wide))
-
+#ensure that similarity matrix is the same size as original
 cs_2_indexedBy1 <- customer_similarities2[row.names(customer_similarities1),colnames(customer_similarities1)]
-head(customer_based_recommendations("39263",
+knitr::kable(head(customer_based_recommendations("41777",
                                     cs_2_indexedBy1,
-                                    customer_products_bought_wide))
+                                    customer_products_bought_wide)),
+             caption = "Recommendations for customer 41777")
 
 ```
-  
-## Combine recommendations
+
+The recommendations for 41777 seems very similar to before, which is a good sign because it shows that the recommendations are not too volatile for customers who already had a good amount of data.
+
+However, the recommendations for customer 411 change quite significantly, meaning that the additional customer information was helpful:
 
 ```{r}
+knitr::kable(head(customer_based_recommendations("411",
+                                    cs_2_indexedBy1,
+                                    customer_products_bought_wide)),
+             caption = "Recommendations for customer 411")
+```
+  
+# Combining into an ensemble recommender
 
+Each of the previous four approaches had their merits, so they are combined into a unified recommender. The ensemble recommender finds the combined rankings from the different recommenders, recommending the wine with the lowest combined ranking first:
+
+```{r}
 ensemble_recommender <- function(customer, context_similarities, no_context_similarities, product_similarities, wide_customer_products_matrix, predicted_ratings){
   
   # Convert to character
@@ -642,37 +652,46 @@ ensemble_recommender <- function(customer, context_similarities, no_context_simi
   
   return(customer_recs)
 }
+```
 
-head(suppressWarnings(ensemble_recommender("39263",
+The recommendations for customer 41777 look fairly similar to before, although it is interesting to see a couple of wines recommended that were not previously in the top 6 - this would be the effect of the ensemble recommender that could see a reasonable high ranked wine in other recommenders end up being very highly recommended when looking at its average ranking.
+
+```{r}
+knitr::kable(head(suppressWarnings(ensemble_recommender("41777",
                      context_similarities = cs_2_indexedBy1,
                      no_context_similarities = customer_similarities1,
                      product_similarities = product_similarities1,
                      wide_customer_products_matrix = customer_products_bought_wide,
-                     predicted_ratings = mf1_predicted))) %>%
-  knitr::kable()
-
-# debug(ensemble_recommender)
-# undebug(ensemble_recommender)
-
-# test <- "411"
-# data.frame(score = mf1_predicted[test,]) %>%
-#     rownames_to_column("product") %>%
-#     mutate(p_rank = rank(-score)) %>%
-#     select(product, p_rank)
-
-# test <- "411"
-# product_based_recommendations(test,
-#                                      product_similarities1,
-#                                      t(customer_products_bought_wide)) %>%
-#     mutate(p_rank = rank(-score)) %>%
-#     select(product, p_rank)
-
-# customer_similarities1["411",] %>% data.frame() %>% rownames_to_column() %>% filter(. > 0) # customer exists and has non-zero similarities to other customers
-# customer_products_bought_wide["411",] %>% data.frame() %>% rownames_to_column() %>% arrange(desc(.)) # only one product with a non-zero
-# cs_2_indexedBy1["411",] %>% data.frame() %>% rownames_to_column() %>% filter(. > 0) # customer exists and has non-zero similarities to other customers
-# mf1_predicted["411",] %>% data.frame() %>% rownames_to_column() %>% filter(. > 0) # customer exists and has non-zero ratings
-
-# customer_products_bought_wide["411",] %>% data.frame() %>% rownames_to_column() %>% arrange(desc(.)) # only one product with a non-zero
-# product_similarities1["TOP SELLING July Everyday Case",]  %>% data.frame() %>% rownames_to_column() %>% arrange(desc(.)) # product bought exists and has non-zero similarities to other products
-
+                     predicted_ratings = mf1_predicted))),
+             caption = "Recommendations for customer 41777")
 ```
+
+The recommendations for customer 411 are also similar to before, but some more obviously poor recommendations have been filtered out (e.g. "discount from Johan"). The ensemble approach appears to be quite robust in this situation.
+
+```{r}
+knitr::kable(head(suppressWarnings(ensemble_recommender("411",
+                     context_similarities = cs_2_indexedBy1,
+                     no_context_similarities = customer_similarities1,
+                     product_similarities = product_similarities1,
+                     wide_customer_products_matrix = customer_products_bought_wide,
+                     predicted_ratings = mf1_predicted))),
+             caption = "Recommendations for customer 411")
+```
+
+# Conclusion
+
+The ensemble approach combines the power of the individual recommender engines, but is still lacking in several areas. Suggestions for further improvements to the recommender:
+
+- Weight each recommender in the ensemble according to its relevance for a customer (i.e. weight the demographic information approach higher for customers without a purchase history, or little purchase history)
+- Add more features to the customer demographic information
+- Use a better metric as the proxy for rating
+- Create a layered recommendation engine that recommends items in a more structured way, leveraging broader product characteristics:
+    - Recommend red or white
+    - Recommend price range
+    - Recommend varietal
+    - Recommend farm
+- Collect more customer information, and incorporate into recommendation engine:
+    - Actual customer ratings of wines, and not just purchases
+    - Customer wine "wish lists"
+- Choose user "sommeliers" who's rating or purchase history could be weighted higher than other users
+ 
