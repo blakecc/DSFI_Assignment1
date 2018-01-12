@@ -1,2 +1,0 @@
-"0","orders_orig <- data.frame(fread(""data/orders.csv"", header = T))"
-"0","order_items <- data.frame(fread(""data/order-items.csv"", header = T))"

@@ -2,3 +2,12 @@
 .Rhistory
 .RData
 .Ruserdata
+
+# GetWine data
+
+data/order-items.csv
+data/orders.csv
+
+# Random
+
+meeting/*
